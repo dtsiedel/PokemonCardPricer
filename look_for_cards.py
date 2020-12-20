@@ -1,5 +1,11 @@
+import argparse
+import glob
+import os
+import pathlib
+
 import cv2
 import numpy as np
+
 
 SCALER = 0.4
 MAXWIDTH = round(700 * SCALER)
@@ -7,11 +13,64 @@ MAXHEIGHT = round(990 * SCALER)
 BKG_THRESH = 80
 CARD_MIN_AREA = 5000
 CARD_MAX_AREA = 100000
+IMG_ROOT = str(pathlib.Path(os.getcwd()) / 'images')
+SIFT_OBJ = cv2.SIFT_create()
+
+
+class Card:
+    """Note that 'path' doubles as the path to the local file and the relative
+    path to the card on limitlesstcg.com"""
+    def __init__(self, path, img_data):
+        self.path = path
+        self.img_data = img_data
+        self.keypoints = None
+
+    def __repr__(self):
+        return str(self.__dict__)
+
+    def load_keypoints(self, sift):
+        gray = cv2.cvtColor(self.img_data, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (15,15), 0)
+        kp, des = sift.detectAndCompute(blur, None)
+        self.keypoints = (kp, des)
+
+
+def load_and_return(card):
+    card.load_keypoints(SIFT_OBJ)
+    return card
+
+
+def get_cards_in_deck(root, region_codes):
+    """Given the root dir of the images tree, get a list of all of the
+    files that contain cards."""
+    # TODO: speed up matching in some way to allow for all regions at once
+    root_parts = pathlib.Path(root).parts
+    all_files = []
+    for code in region_codes:
+        all_files.extend(glob.glob(f'{root}/{code}/**/*', recursive=True))
+    card_paths = [f for f in all_files if not os.path.isdir(f)]
+    
+    cards = [Card(str(pathlib.Path(n).relative_to(*root_parts)), cv2.imread(n)) for n in card_paths]
+
+    # populate keypoints
+    return list(map(load_and_return, cards))
+
+ 
+def load_card_keypoints(self, images):
+    card_keypoints = []
+    
+    for card in cards:
+        gray = cv2.cvtColor(card.img_data, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (15,15), 0)
+        kp, des = sift.detectAndCompute(blur, None)
+        card_keypoints.append([kp, des, card.path])
+    
+    return card_keypoints
 
 
 def flattener(image, pts, w, h):
     """Flattens an image of a card into a top-down SCALERx(MAXWIDTHxMAXHEIGHT) 
-    perspective. Returns the flattened, re-sized"""
+    perspective. Returns the flattened, re-sized image"""
     temp_rect = np.zeros((4,2), dtype = "float32")
     
     s = np.sum(pts, axis = 2)
@@ -101,7 +160,36 @@ def find_cards(thresh):
     return cnts_sort, cnt_is_card
 
 
-def process_cards(cnts_sort, cnt_is_card, frame, deck):
+def match_card(card_img, cards):
+    gray = cv2.cvtColor(card_img, cv2.COLOR_BGR2GRAY)
+    sift = cv2.xfeatures2d.SIFT_create()
+    kp1, des1 = sift.detectAndCompute(gray, None)
+    
+    bf = cv2.BFMatcher()
+    max_good_points = 0
+    max_pokemon_match = None
+
+    #for pokemon in deck.card_keypoints:
+    for card in cards:
+        pokemon = card.keypoints
+        des2 = pokemon[1]
+        
+        matches = bf.knnMatch(des1, des2, k=2)
+    
+        # Apply ratio test
+        good = []
+        for m, n in matches:
+            if m.distance < 0.5 * n.distance:
+                good.append([m])
+        good_points = len(good)
+        if good_points > max_good_points:
+            max_good_points = good_points
+            max_pokemon_match = card.path
+            
+    return max_pokemon_match
+
+
+def process_cards(cnts_sort, cnt_is_card, frame, cards):
     i = 0
     card_pairs = []
     for is_card in cnt_is_card:
@@ -120,28 +208,36 @@ def process_cards(cnts_sort, cnt_is_card, frame, deck):
 
             cv2.imshow('cutout', img)
            
-            # TODO: add back card match logic
-            #matched_card_name = match_card(img, deck)
-            #if matched_card_name is not None:
-                #matched_card_img = deck.card_images[matched_card_name]
-                #matched_card_img = cv2.resize(matched_card_img, (MAXWIDTH, MAXHEIGHT))
-                #numpy_horizontal_concat = np.concatenate((img, matched_card_img), axis=1)
-            #else:
-                #numpy_horizontal_concat = np.concatenate((img, img*0), axis=1)
-            #card_pairs.append(numpy_horizontal_concat)
+            matched_card_name = match_card(img, cards)
+            if matched_card_name is not None:
+                return matched_card_name
+            else:
+                return None
         i += 1
-        
-    return card_pairs
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Identify Pokemon Cards.')
+    parser.add_argument('-s', '--sets', nargs='+', help='<Required> Region Code', required=True)
+    args = parser.parse_args()
+
+    cards = get_cards_in_deck(IMG_ROOT, args.sets)
+
     cap = cv2.VideoCapture(0)
 
+    last_match = None
     while True:
         ret, frame = cap.read()     
         thresh = preprocess_img(frame)
         cnts_sort, cnt_is_card = find_cards(thresh)
-        card_pairs = process_cards(cnts_sort, cnt_is_card, frame, deck=None)
+        match = process_cards(cnts_sort, cnt_is_card, frame, cards)
+
+        # TODO: optimization to just check the last card again if we think we have a match
+        if match is not None and match == last_match:
+            print('True match:', match)
+        else:
+            print('No match.')
+        last_match = match
 
         cv2.imshow('Card Search', frame)
         cv2.imshow('thresh', thresh)
