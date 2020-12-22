@@ -15,6 +15,7 @@ CARD_MIN_AREA = 5000
 CARD_MAX_AREA = 100000
 IMG_ROOT = str(pathlib.Path(os.getcwd()) / 'images')
 SIFT_OBJ = cv2.SIFT_create()
+SHORTCUT_MATCH_THRESH = 10
 
 
 class Card:
@@ -35,11 +36,6 @@ class Card:
         self.keypoints = (kp, des)
 
 
-def load_and_return(card):
-    card.load_keypoints(SIFT_OBJ)
-    return card
-
-
 def get_cards_in_deck(root, region_codes):
     """Given the root dir of the images tree, get a list of all of the
     files that contain cards."""
@@ -50,10 +46,16 @@ def get_cards_in_deck(root, region_codes):
         all_files.extend(glob.glob(f'{root}/{code}/**/*', recursive=True))
     card_paths = [f for f in all_files if not os.path.isdir(f)]
     
-    cards = [Card(str(pathlib.Path(n).relative_to(*root_parts)), cv2.imread(n)) for n in card_paths]
+    # path as key replicates data but is a good optimization for lookups
+    cards = {}
+    for n in card_paths:
+        rel = str(pathlib.Path(n).relative_to(*root_parts))
+        this_card = Card(rel, cv2.imread(n))
+        this_card.load_keypoints(SIFT_OBJ)
+        cards[rel] = this_card
+    print('Read', len(cards), 'images.')
 
-    # populate keypoints
-    return list(map(load_and_return, cards))
+    return cards
 
  
 def load_card_keypoints(self, images):
@@ -160,7 +162,7 @@ def find_cards(thresh):
     return cnts_sort, cnt_is_card
 
 
-def match_card(card_img, cards):
+def match_card(card_img, cards, expected=None):
     gray = cv2.cvtColor(card_img, cv2.COLOR_BGR2GRAY)
     sift = cv2.xfeatures2d.SIFT_create()
     kp1, des1 = sift.detectAndCompute(gray, None)
@@ -169,8 +171,18 @@ def match_card(card_img, cards):
     max_good_points = 0
     max_pokemon_match = None
 
-    #for pokemon in deck.card_keypoints:
-    for card in cards:
+    if expected is not None:
+        des2 = cards.get(expected).keypoints[1]
+        matches = bf.knnMatch(des1, des2, k=2)
+
+        good = []
+        for m, n in matches:
+            if m.distance < 0.5 * n.distance:
+                good.append([m])
+        if len(good) > SHORTCUT_MATCH_THRESH:
+            return expected
+
+    for path, card in cards.items():
         pokemon = card.keypoints
         des2 = pokemon[1]
         
@@ -184,12 +196,12 @@ def match_card(card_img, cards):
         good_points = len(good)
         if good_points > max_good_points:
             max_good_points = good_points
-            max_pokemon_match = card.path
-            
+            max_pokemon_match = path
+
     return max_pokemon_match
 
 
-def process_cards(cnts_sort, cnt_is_card, frame, cards):
+def process_cards(cnts_sort, cnt_is_card, frame, cards: dict, expected=None):
     i = 0
     card_pairs = []
     for is_card in cnt_is_card:
@@ -208,7 +220,7 @@ def process_cards(cnts_sort, cnt_is_card, frame, cards):
 
             cv2.imshow('cutout', img)
            
-            matched_card_name = match_card(img, cards)
+            matched_card_name = match_card(img, cards, expected=expected)
             if matched_card_name is not None:
                 return matched_card_name
             else:
@@ -230,9 +242,8 @@ if __name__ == '__main__':
         ret, frame = cap.read()     
         thresh = preprocess_img(frame)
         cnts_sort, cnt_is_card = find_cards(thresh)
-        match = process_cards(cnts_sort, cnt_is_card, frame, cards)
+        match = process_cards(cnts_sort, cnt_is_card, frame, cards, expected=last_match)
 
-        # TODO: optimization to just check the last card again if we think we have a match
         if match is not None and match == last_match:
             print('True match:', match)
         else:
