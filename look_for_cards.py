@@ -1,4 +1,5 @@
 import argparse
+import collections
 import glob
 import os
 import pathlib
@@ -231,24 +232,26 @@ def process_cards(cnts_sort, cnt_is_card, frame, cards: dict, expected=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Identify Pokemon Cards.')
     parser.add_argument('-s', '--sets', nargs='+', help='<Required> Region Code', required=True)
+    parser.add_argument('-c', '--consecutive-matches', type=int, default=3)
     args = parser.parse_args()
 
     cards = get_cards_in_deck(IMG_ROOT, args.sets)
 
     cap = cv2.VideoCapture(0)
 
-    last_match = None
+    match_count = args.consecutive_matches
+    last_matches = collections.deque([None] * match_count, match_count)
     while True:
         ret, frame = cap.read()     
         thresh = preprocess_img(frame)
         cnts_sort, cnt_is_card = find_cards(thresh)
-        match = process_cards(cnts_sort, cnt_is_card, frame, cards, expected=last_match)
+        match = process_cards(cnts_sort, cnt_is_card, frame, cards, expected=last_matches[0])
 
-        if match is not None and match == last_match:
+        if match is not None and all([x == match for x in list(last_matches)]):
             print('True match:', match)
         else:
             print('No match.')
-        last_match = match
+        last_matches.append(match)
 
         cv2.imshow('Card Search', frame)
         cv2.imshow('thresh', thresh)
