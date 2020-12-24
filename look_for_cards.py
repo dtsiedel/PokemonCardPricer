@@ -1,11 +1,15 @@
 import argparse
 import collections
+import functools
 import glob
 import os
 import pathlib
+import threading
 
+import bs4
 import cv2
 import numpy as np
+import requests
 
 
 SCALER = 0.4
@@ -17,6 +21,7 @@ CARD_MAX_AREA = 100000
 IMG_ROOT = str(pathlib.Path(os.getcwd()) / 'images')
 SIFT_OBJ = cv2.SIFT_create()
 SHORTCUT_MATCH_THRESH = 10
+LOOKUP_URL = 'https://limitlesstcg.com/cards/'
 
 
 class Card:
@@ -229,6 +234,36 @@ def process_cards(cnts_sort, cnt_is_card, frame, cards: dict, expected=None):
         i += 1
 
 
+def threadsafe_lru(func):
+    func = functools.lru_cache()(func)
+    lock_dict = collections.defaultdict(threading.Lock)
+
+    def _thread_lru(*args, **kwargs):
+        key = functools._make_key(args, kwargs, typed=False)
+        with lock_dict[key]:
+            return func(*args, **kwargs)
+
+    return _thread_lru
+
+
+@threadsafe_lru
+def card_details_from_path(path):
+    print('lookup', path)
+    url = LOOKUP_URL + path
+    r = requests.get(url)
+    r.raise_for_status()
+    soup = bs4.BeautifulSoup(r.content, 'html.parser')
+
+    price = soup.find('span', class_="card-buy-button-price usd").text
+    name = soup.find('span', class_="card-text-name").text
+
+    return {'price': price, 'name': name}
+
+
+def print_card_details(path):
+    print(card_details_from_path(path))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Identify Pokemon Cards.')
     parser.add_argument('-s', '--sets', nargs='+', help='<Required> Region Code', required=True)
@@ -247,10 +282,10 @@ if __name__ == '__main__':
         cnts_sort, cnt_is_card = find_cards(thresh)
         match = process_cards(cnts_sort, cnt_is_card, frame, cards, expected=last_matches[0])
 
+        # True match, fetch price
         if match is not None and all([x == match for x in list(last_matches)]):
-            print('True match:', match)
-        else:
-            print('No match.')
+            th = threading.Thread(target=print_card_details, args=(match,))
+            th.start()
         last_matches.append(match)
 
         cv2.imshow('Card Search', frame)
