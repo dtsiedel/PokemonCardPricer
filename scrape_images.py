@@ -34,7 +34,7 @@ sets = [
     PkmnSet('Vivid Voltage', re.compile('.*-viv-\d+a?b?/')),
     PkmnSet('Chamption\'s Path', re.compile('.*-cpa-\d+a?b?/')),
     PkmnSet('Darkness Ablaze', re.compile('.*-daa-\d+a?b?/')),
-    PkmnSet('Rebel Clash', re.compile('.*-rcl-\d+a?b?/')),
+    PkmnSet('Rebel Clash', re.compile('.*-rcl-\d+a?b?/'), lambda s: str(int(f'/{parts[-2]}/{parts[-1][:-1]}'))),
     PkmnSet('Sword & Shield', re.compile('.*-ssh-\d+a?b?/')),
     PkmnSet('Cosmic Eclipse', re.compile('.*-cec-\d+a?b?/')),
     PkmnSet('Hidden Fates', re.compile('.*-hif-\d+a?b?/')),
@@ -52,12 +52,18 @@ sets = [
     PkmnSet('Burning Shadows', re.compile('.*-bus-\d+a?b?/')),
     PkmnSet('Guardians Rising', re.compile('.*-gri-\d+a?b?/')),
     PkmnSet('Sun & Moon', re.compile('.*-sum-\d+a?b?/')),
+    # TODO: standard format for shiny vaults
     PkmnSet('Team Up Shiny Vault', re.compile('.*-teu-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),  # shiny vault can be weird
     PkmnSet('Dragon Majesty Shiny Vault', re.compile('.*-drm-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
     PkmnSet('Celestial Storm Shiny Vault', re.compile('.*-ces-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
     PkmnSet('Forbidden Light Shiny Vault', re.compile('.*-fli-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
     PkmnSet('Lost Thunder Shiny Vault', re.compile('.*-lot-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
     PkmnSet('Ultra Prism Shiny Vault', re.compile('.*-upr-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
+    PkmnSet('Sun & Moon Shiny Vault', re.compile('.*-sum-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
+    PkmnSet('Burning Shadows Shiny Vault', re.compile('.*-bus-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
+    PkmnSet('Guardians Rising Shiny Vault', re.compile('.*-gri-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
+    PkmnSet('Shining Legends Shiny Vault', re.compile('.*-slg-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
+    PkmnSet('Crimson Invasion Shiny Vault', re.compile('.*-cin-sv\d+a?b?/'), lambda s: f'/hif/{s.split("-")[-1][:-1]}'),
     PkmnSet('Sun & Moon Promos', re.compile('.*-sun-moon-promos-sm\d+a?b?/'), lambda s: f'/smp/{s.split("-")[-1][:-1]}'),
     PkmnSet('Sword & Shield Promos', re.compile('.*-sword-shield-promos-swsh\d+/'), lambda s: f'/ssp/{str(int(s.split("-")[-1][4:-1]))}'),
 ]
@@ -85,6 +91,8 @@ page_urls = []
 i = 1
 while True:
     url = f'https://pkmncards.com/page/{i}/?s=format%3Ateu-on-standard-2021%2Cupr-on-standard-2020%2Csum-on-standard-2019&display=images&sort=date&order=asc'
+    # TODO: some shiny vault misbehaving. Find a way to work it into main URL
+    #url = f'https://pkmncards.com/page/{i}/?s=collection%3Ashiny-vault&display=images&sort=date&order=asc'
 
     r = requests.get(url)
     if r.status_code != 200:

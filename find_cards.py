@@ -260,8 +260,10 @@ def card_details_from_path(path):
     return {'price': price, 'name': name}
 
 
-def print_card_details(path):
-    print(card_details_from_path(path))
+def set_last_price(path, price_obj):
+    details = card_details_from_path(path)
+    price_obj['price'] = details['price']
+    price_obj['name'] = details['name']
 
 
 if __name__ == '__main__':
@@ -276,6 +278,7 @@ if __name__ == '__main__':
 
     match_count = args.consecutive_matches
     last_matches = collections.deque([None] * match_count, match_count)
+    last_price = {}  # use dict to allow mutation in thread
     while True:
         ret, frame = cap.read()     
         thresh = preprocess_img(frame)
@@ -284,12 +287,12 @@ if __name__ == '__main__':
 
         # True match, fetch price
         if match is not None and all([x == match for x in list(last_matches)]):
-            th = threading.Thread(target=print_card_details, args=(match,))
+            th = threading.Thread(target=set_last_price, args=(match, last_price))
             th.start()
         last_matches.append(match)
 
+        cv2.putText(frame, str(last_price), (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
         cv2.imshow('Card Search', frame)
-        cv2.imshow('thresh', thresh)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
