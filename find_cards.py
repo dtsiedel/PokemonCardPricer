@@ -46,6 +46,7 @@ def get_cards_in_deck(root, region_codes):
     """Given the root dir of the images tree, get a list of all of the
     files that contain cards."""
     # TODO: speed up matching in some way to allow for all regions at once
+    # TODO: it should be possible to multithread some matching with Pool
     root_parts = pathlib.Path(root).parts
     all_files = []
     for code in region_codes:
@@ -266,6 +267,14 @@ def set_last_price(path, price_obj):
     price_obj['name'] = details['name']
 
 
+def annotate_frame(frame, last_price):
+    if len(last_price) == 0:
+        return
+
+    string = f'{last_price["name"]} (${last_price["price"]})'
+    cv2.putText(frame, string, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Identify Pokemon Cards.')
     parser.add_argument('-s', '--sets', nargs='+', help='<Required> Region Code', required=True)
@@ -291,7 +300,9 @@ if __name__ == '__main__':
             th.start()
         last_matches.append(match)
 
-        cv2.putText(frame, str(last_price), (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
+        # TODO: reset last_price after a few misses
+        # TODO: commandline debug flag to show threshold, prints
+        annotate_frame(frame, last_price)
         cv2.imshow('Card Search', frame)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
