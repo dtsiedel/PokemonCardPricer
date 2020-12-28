@@ -208,7 +208,7 @@ def match_card(card_img, cards, expected=None):
     return max_pokemon_match
 
 
-def process_cards(cnts_sort, cnt_is_card, frame, cards: dict, expected=None):
+def process_cards(cnts_sort, cnt_is_card, frame, debug, cards: dict, expected=None):
     i = 0
     card_pairs = []
     for is_card in cnt_is_card:
@@ -220,14 +220,15 @@ def process_cards(cnts_sort, cnt_is_card, frame, cards: dict, expected=None):
             pts = np.float32(approx)
 
             # Find width and height of card's bounding rectangle
-            x,y,w,h = cv2.boundingRect(contour)
+            x, y, w, h = cv2.boundingRect(contour)
 
             # Warp card into SCALERx(900x770) flattened image using perspective transform
             img = flattener(frame, pts, w, h)
 
-            cv2.imshow('cutout', img)
-           
             matched_card_name = match_card(img, cards, expected=expected)
+            if debug:
+                cv2.imshow('cutout', img)
+                print('match:', matched_card_name)
             if matched_card_name is not None:
                 return matched_card_name
             else:
@@ -248,8 +249,9 @@ def threadsafe_lru(func):
 
 
 @threadsafe_lru
-def card_details_from_path(path):
-    print('lookup', path)
+def card_details_from_path(path, debug):
+    if debug:
+        print('lookup', path)
     url = LOOKUP_URL + path
     r = requests.get(url)
     r.raise_for_status()
@@ -261,8 +263,8 @@ def card_details_from_path(path):
     return {'price': price, 'name': name}
 
 
-def set_last_price(path, price_obj):
-    details = card_details_from_path(path)
+def set_last_price(path, price_obj, debug):
+    details = card_details_from_path(path, debug)
     price_obj['price'] = details['price']
     price_obj['name'] = details['name']
 
@@ -279,6 +281,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Identify Pokemon Cards.')
     parser.add_argument('-s', '--sets', nargs='+', help='<Required> Region Code', required=True)
     parser.add_argument('-c', '--consecutive-matches', type=int, default=3)
+    parser.add_argument('-d', '--debug', action="store_true", default=False)
     args = parser.parse_args()
 
     cards = get_cards_in_deck(IMG_ROOT, args.sets)
@@ -291,12 +294,14 @@ if __name__ == '__main__':
     while True:
         ret, frame = cap.read()     
         thresh = preprocess_img(frame)
+        if args.debug:
+            cv2.imshow('After Thresh', thresh)
         cnts_sort, cnt_is_card = find_cards(thresh)
-        match = process_cards(cnts_sort, cnt_is_card, frame, cards, expected=last_matches[0])
+        match = process_cards(cnts_sort, cnt_is_card, frame, args.debug, cards=cards, expected=last_matches[0])
 
         # True match, fetch price
         if match is not None and all([x == match for x in list(last_matches)]):
-            th = threading.Thread(target=set_last_price, args=(match, last_price))
+            th = threading.Thread(target=set_last_price, args=(match, last_price, args.debug))
             th.start()
 
         # Remove price if no card
@@ -304,7 +309,6 @@ if __name__ == '__main__':
             last_price = {}
         last_matches.append(match)
 
-        # TODO: commandline debug flag to show threshold, prints
         annotate_frame(frame, last_price)
         cv2.imshow('Card Search', frame)
 
