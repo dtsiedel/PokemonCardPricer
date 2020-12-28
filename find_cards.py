@@ -298,9 +298,12 @@ if __name__ == '__main__':
         if match is not None and all([x == match for x in list(last_matches)]):
             th = threading.Thread(target=set_last_price, args=(match, last_price))
             th.start()
+
+        # Remove price if no card
+        if match is None and all([x == match for x in list(last_matches)]):
+            last_price = {}
         last_matches.append(match)
 
-        # TODO: reset last_price after a few misses
         # TODO: commandline debug flag to show threshold, prints
         annotate_frame(frame, last_price)
         cv2.imshow('Card Search', frame)
