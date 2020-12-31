@@ -1,4 +1,5 @@
 *.swp
+*.mov
 env
 images
 .DS_Store
