@@ -1,3 +1,3 @@
 ![demo](out.gif)
 
-Card detection logic copied nearly wholesale from https://github.com/luisquint/Pokemon-Card-Detector/
+Basic card detection logic copied nearly wholesale from https://github.com/luisquint/Pokemon-Card-Detector/, then adapted and optimized for my purposes.
