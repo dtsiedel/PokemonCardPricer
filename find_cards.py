@@ -2,6 +2,7 @@ import argparse
 import collections
 import functools
 import glob
+import multiprocessing
 import os
 import pathlib
 import threading
@@ -22,6 +23,8 @@ IMG_ROOT = str(pathlib.Path(os.getcwd()) / 'images')
 SIFT_OBJ = cv2.SIFT_create()
 SHORTCUT_MATCH_THRESH = 10
 LOOKUP_URL = 'https://limitlesstcg.com/cards/'
+cards = None
+bf = cv2.BFMatcher()
 
 
 class Card:
@@ -39,7 +42,7 @@ class Card:
         gray = cv2.cvtColor(self.img_data, cv2.COLOR_BGR2GRAY)
         blur = cv2.GaussianBlur(gray, (15,15), 0)
         kp, des = sift.detectAndCompute(blur, None)
-        self.keypoints = (kp, des)
+        self.keypoints = des
 
 
 def get_cards_in_deck(root, region_codes):
@@ -54,29 +57,17 @@ def get_cards_in_deck(root, region_codes):
     card_paths = [f for f in all_files if not os.path.isdir(f)]
     
     # path as key replicates data but is a good optimization for lookups
-    cards = {}
+    cards_l = {}
     for n in card_paths:
         rel = str(pathlib.Path(n).relative_to(*root_parts))
         this_card = Card(rel, cv2.imread(n))
         this_card.load_keypoints(SIFT_OBJ)
-        cards[rel] = this_card
-    print('Read', len(cards), 'images.')
+        cards_l[rel] = this_card
+    print('Read', len(cards_l), 'images.')
 
-    return cards
+    return cards_l
 
  
-def load_card_keypoints(self, images):
-    card_keypoints = []
-    
-    for card in cards:
-        gray = cv2.cvtColor(card.img_data, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (15,15), 0)
-        kp, des = sift.detectAndCompute(blur, None)
-        card_keypoints.append([kp, des, card.path])
-    
-    return card_keypoints
-
-
 def flattener(image, pts, w, h):
     """Flattens an image of a card into a top-down SCALERx(MAXWIDTHxMAXHEIGHT) 
     perspective. Returns the flattened, re-sized image"""
@@ -169,17 +160,29 @@ def find_cards(thresh):
     return cnts_sort, cnt_is_card
 
 
-def match_card(card_img, cards, expected=None):
+def pool_target(path, des1):
+    des2 = cards[path].keypoints
+
+    matches = bf.knnMatch(des1, des2, k=2)
+
+    # Apply ratio test
+    good = []
+    for m, n in matches:
+        if m.distance < 0.5 * n.distance:
+            good.append([m])
+    return (path, len(good))
+
+
+def match_card(card_img, cards_l, pool, expected=None):
     gray = cv2.cvtColor(card_img, cv2.COLOR_BGR2GRAY)
     sift = cv2.xfeatures2d.SIFT_create()
     kp1, des1 = sift.detectAndCompute(gray, None)
     
-    bf = cv2.BFMatcher()
     max_good_points = 0
     max_pokemon_match = None
 
     if expected is not None:
-        des2 = cards.get(expected).keypoints[1]
+        des2 = cards_l.get(expected).keypoints
         matches = bf.knnMatch(des1, des2, k=2)
 
         good = []
@@ -189,26 +192,13 @@ def match_card(card_img, cards, expected=None):
         if len(good) > SHORTCUT_MATCH_THRESH:
             return expected
 
-    for path, card in cards.items():
-        pokemon = card.keypoints
-        des2 = pokemon[1]
-        
-        matches = bf.knnMatch(des1, des2, k=2)
-    
-        # Apply ratio test
-        good = []
-        for m, n in matches:
-            if m.distance < 0.5 * n.distance:
-                good.append([m])
-        good_points = len(good)
-        if good_points > max_good_points:
-            max_good_points = good_points
-            max_pokemon_match = path
-
-    return max_pokemon_match
+    target = functools.partial(pool_target, des1=des1)
+    good_counts = pool.map(target, cards_l.keys())
+    best = max(good_counts, key = lambda i: i[1])
+    return best[0]
 
 
-def process_cards(cnts_sort, cnt_is_card, frame, debug, cards: dict, expected=None):
+def process_cards(cnts_sort, cnt_is_card, frame, debug, cards_l: dict, pool, expected=None):
     i = 0
     card_pairs = []
     for is_card in cnt_is_card:
@@ -225,7 +215,7 @@ def process_cards(cnts_sort, cnt_is_card, frame, debug, cards: dict, expected=No
             # Warp card into SCALERx(900x770) flattened image using perspective transform
             img = flattener(frame, pts, w, h)
 
-            matched_card_name = match_card(img, cards, expected=expected)
+            matched_card_name = match_card(img, cards_l, pool, expected=expected)
             if debug:
                 cv2.imshow('cutout', img)
                 print('match:', matched_card_name)
@@ -277,6 +267,10 @@ def annotate_frame(frame, last_price):
     cv2.putText(frame, string, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
 
 
+def assign_global(c):
+    global cards
+    cards = c
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Identify Pokemon Cards.')
     parser.add_argument('-s', '--sets', nargs='+', help='<Required> Region Code', required=True)
@@ -284,6 +278,9 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--debug', action="store_true", default=False)
     args = parser.parse_args()
 
+    # Mutable globals are bad, but this one lets us pass a large dictionary into other processes
+    # just once, and then use it later. If we had to pass it in each time, the IPC cost would
+    # exceed the speedup of using multiple processes.
     cards = get_cards_in_deck(IMG_ROOT, args.sets)
 
     cap = cv2.VideoCapture(0)
@@ -291,13 +288,14 @@ if __name__ == '__main__':
     match_count = args.consecutive_matches
     last_matches = collections.deque([None] * match_count, match_count)
     last_price = {}  # use dict to allow mutation in thread
+    pool = multiprocessing.Pool(4, initializer=assign_global, initargs=(cards,))
     while True:
         ret, frame = cap.read()     
         thresh = preprocess_img(frame)
         if args.debug:
             cv2.imshow('After Thresh', thresh)
         cnts_sort, cnt_is_card = find_cards(thresh)
-        match = process_cards(cnts_sort, cnt_is_card, frame, args.debug, cards=cards, expected=last_matches[0])
+        match = process_cards(cnts_sort, cnt_is_card, frame, args.debug, cards, pool, expected=last_matches[0])
 
         # True match, fetch price
         if match is not None and all([x == match for x in list(last_matches)]):
@@ -317,3 +315,4 @@ if __name__ == '__main__':
 
     cap.release()
     cv2.destroyAllWindows()
+    pool.close()
